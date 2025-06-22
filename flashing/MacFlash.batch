@@ -1,0 +1,3 @@
+while true; do
+python3 /Users/samknox/.platformio/packages/tool-esptoolpy/esptool.py --after soft_reset --chip esp8266 --port /dev/cu.usbserial-AQ035JK3 --baud 3000000 write_flash 0x0 /Users/samknox/Documents/Kahuna/.pio/build/esp07s/mavesp-esp07s-2.4.0.bin
+done
