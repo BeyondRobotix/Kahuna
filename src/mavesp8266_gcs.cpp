@@ -107,8 +107,9 @@ bool MavESP8266GCS::_readMessage()
                     _status.packets_received++;
                     if (_ip[3] == 255)
                     {
-                        _ip = _udp.remoteIP();
-                        getWorld()->getLogger()->log("Response from GCS. Setting GCS IP to: %s\n", _ip.toString().c_str());
+                        // Continue to broadcast
+                        //_ip = _udp.remoteIP();
+                        // getWorld()->getLogger()->log("Response from GCS. Setting GCS IP to: %s\n", _ip.toString().c_str());
                         _ledManager.setLED(_ledManager.wifi, _ledManager.on);
                     }
                     //-- First packets
@@ -117,11 +118,11 @@ bool MavESP8266GCS::_readMessage()
                         if (_message.msgid == MAVLINK_MSG_ID_HEARTBEAT)
                         {
                             _ledManager.setLED(_ledManager.gcs, _ledManager.on);
-                            //-- We no longer need DHCP
-                            if (getWorld()->getParameters()->getWifiMode() == WIFI_MODE_AP)
-                            {
-                                wifi_softap_dhcps_stop();
-                            }
+                            // Do not turn off dhcp
+                            // if (getWorld()->getParameters()->getWifiMode() == WIFI_MODE_AP)
+                            // {
+                            //     wifi_softap_dhcps_stop();
+                            // }
                             _heard_from = true;
                             _system_id = _message.sysid;
                             _component_id = _message.compid;
@@ -167,13 +168,13 @@ bool MavESP8266GCS::_readMessage()
         if (_heard_from && (millis() - _last_heartbeat) > HEARTBEAT_TIMEOUT)
         {
             _ledManager.setLED(_ledManager.gcs, _ledManager.blink);
-            //-- Restart DHCP and start broadcasting again
-            if (getWorld()->getParameters()->getWifiMode() == WIFI_MODE_AP)
-            {
-                wifi_softap_dhcps_start();
-            }
+            //-- No need to restart dhcp as it is still running
+            // if (getWorld()->getParameters()->getWifiMode() == WIFI_MODE_AP)
+            // {
+            //     wifi_softap_dhcps_start();
+            // }
             _heard_from = false;
-            _ip[3] = 255;
+            //_ip[3] = 255;
             getWorld()->getLogger()->log("Heartbeat timeout from GCS\n");
         }
     }
