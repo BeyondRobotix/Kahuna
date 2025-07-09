@@ -48,6 +48,14 @@ MavESP8266GCS::MavESP8266GCS(LEDManager &ledManager)
     _recv_chan = MAVLINK_COMM_1;
     _send_chan = MAVLINK_COMM_0;
     memset(&_message, 0, sizeof(_message));
+
+    // Set up the client list
+    for (int i = 0; i < MAX_GCS_CLIENTS; i++)
+    {
+        _gcs_clients[i].active = false;
+        _gcs_clients[i].heard_from = false;
+        memset(&_gcs_clients[i].status, 0, sizeof(linkStatus));
+    }
 }
 
 //---------------------------------------------------------------------------------
@@ -55,17 +63,18 @@ MavESP8266GCS::MavESP8266GCS(LEDManager &ledManager)
 void MavESP8266GCS::begin(MavESP8266Bridge *forwardTo, IPAddress gcsIP)
 {
     MavESP8266Bridge::begin(forwardTo);
-    _ip = gcsIP;
+    _gcs_broadcast_ip = gcsIP;
     //-- Init variables that shouldn't change unless we reboot
     _udp_port = getWorld()->getParameters()->getWifiUdpHport();
     //-- Start UDP
     _udp.begin(getWorld()->getParameters()->getWifiUdpCport());
 }
 
-//---------------------------------------------------------------------------------
-//-- Read MavLink message from GCS
 void MavESP8266GCS::readMessage()
 {
+    //-- Prune stale clients
+    _pruneClients();
+
     //-- Read UDP
     if (_readMessage())
     {
@@ -73,8 +82,9 @@ void MavESP8266GCS::readMessage()
         _forwardTo->sendMessage(&_message);
         memset(&_message, 0, sizeof(_message));
     }
+
     //-- Update radio status (1Hz)
-    if (_heard_from && (millis() - _last_status_time > 1000))
+    if (_isGCSHeard() && (millis() - _last_status_time > 1000))
     {
         delay(0);
         _sendRadioStatus();
@@ -82,14 +92,100 @@ void MavESP8266GCS::readMessage()
     }
 }
 
-//---------------------------------------------------------------------------------
-//-- Read MavLink message from GCS
+void MavESP8266GCS::readMessageRaw()
+{
+    int udp_count = _udp.parsePacket();
+    if (udp_count > 0)
+    {
+        char buf[1024];
+        int len = _udp.read(buf, sizeof(buf));
+
+        if (len > 0)
+        {
+            //-- Update client list
+            _addOrUpdateClient(_udp.remoteIP(), _udp.remotePort());
+
+            if (buf[0] == 0x30 && buf[1] == 0x20)
+            {
+                // reboot command, switch out of raw mode soon
+                getWorld()->getComponent()->resetRawMode();
+            }
+
+            _forwardTo->sendMessageRaw((uint8_t *)buf, len);
+        }
+    }
+}
+
+int MavESP8266GCS::sendMessage(mavlink_message_t *message, int count)
+{
+    // Outer loop iterates through the batch of messages from the vehicle
+    for (int i = 0; i < count; i++)
+    {
+        // Buffer to hold the currently serialized MAVLink packet
+        char buf[300];
+        // Serialize the i-th message from the array
+        unsigned len = mavlink_msg_to_send_buffer((uint8_t *)buf, &message[i]);
+
+        for (int j = 0; j < MAX_GCS_CLIENTS; j++)
+        {
+            if (_gcs_clients[j].active)
+            {
+                _udp.beginPacket(_gcs_clients[j].ip, _gcs_clients[j].port);
+                _udp.write((uint8_t *)(void *)buf, len);
+                _udp.endPacket();
+            }
+        }
+
+        // Also send to the broadcast address to allow new clients to connect
+        _udp.beginPacket(_gcs_broadcast_ip, _udp_port);
+        _udp.write((uint8_t *)(void *)buf, len);
+        _udp.endPacket();
+    }
+
+    _status.packets_sent += count;
+
+    // Return the number of merssages processed
+    return count;
+}
+
+int MavESP8266GCS::sendMessage(mavlink_message_t *message)
+{
+    return sendMessage(message, 1);
+}
+
+int MavESP8266GCS::sendMessageRaw(uint8_t *buffer, int len)
+{
+    int sentCount = 0;
+    //-- Send to all active unicast clients
+    for (int i = 0; i < MAX_GCS_CLIENTS; i++)
+    {
+        if (_gcs_clients[i].active)
+        {
+            _udp.beginPacket(_gcs_clients[i].ip, _gcs_clients[i].port);
+            _udp.write(buffer, len);
+            _udp.endPacket();
+            sentCount++;
+        }
+    }
+
+    //-- Also send to the broadcast address
+    _udp.beginPacket(_gcs_broadcast_ip, _udp_port);
+    _udp.write(buffer, len);
+    _udp.endPacket();
+
+    return sentCount;
+}
+
 bool MavESP8266GCS::_readMessage()
 {
     bool msgReceived = false;
     int udp_count = _udp.parsePacket();
     if (udp_count > 0)
     {
+        //-- Get the sender's IP and port
+        IPAddress gcs_ip = _udp.remoteIP();
+        uint16_t gcs_port = _udp.remotePort();
+
         while (udp_count--)
         {
             int result = _udp.read();
@@ -103,61 +199,67 @@ bool MavESP8266GCS::_readMessage()
                                                         &_mav_status);
                 if (msgReceived)
                 {
-                    //-- We no longer need to broadcast
-                    _status.packets_received++;
-                    if (_ip[3] == 255)
+                    //-- Get the client for this message
+                    GCSClient *client = _addOrUpdateClient(gcs_ip, gcs_port);
+                    _ledManager.setLED(_ledManager.wifi, _ledManager.on);
+
+                    if (client)
                     {
-                        // Continue to broadcast
-                        //_ip = _udp.remoteIP();
-                        // getWorld()->getLogger()->log("Response from GCS. Setting GCS IP to: %s\n", _ip.toString().c_str());
-                        _ledManager.setLED(_ledManager.wifi, _ledManager.on);
-                    }
-                    //-- First packets
-                    if (!_heard_from)
-                    {
-                        if (_message.msgid == MAVLINK_MSG_ID_HEARTBEAT)
+                        client->status.packets_received++;
+
+                        //-- Handle first contact with this specific client
+                        if (!client->heard_from)
                         {
-                            _ledManager.setLED(_ledManager.gcs, _ledManager.on);
-                            // Do not turn off dhcp
-                            // if (getWorld()->getParameters()->getWifiMode() == WIFI_MODE_AP)
-                            // {
-                            //     wifi_softap_dhcps_stop();
-                            // }
-                            _heard_from = true;
-                            _system_id = _message.sysid;
-                            _component_id = _message.compid;
-                            _seq_expected = _message.seq + 1;
-                            _last_heartbeat = millis();
+                            if (_message.msgid == MAVLINK_MSG_ID_HEARTBEAT)
+                            {
+                                client->heard_from = true;
+                                client->seq_expected = _message.seq + 1;
+                                //-- Set global sys/comp ID from first GCS that connects
+                                // TODO handle this better
+                                if (!_heard_from)
+                                {
+                                    _heard_from = true;
+                                    _ledManager.setLED(_ledManager.gcs, _ledManager.on);
+                                    _system_id = _message.sysid;
+                                    _component_id = _message.compid;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            //-- Check for packet loss from this specific client
+                            uint16_t seq_received = (uint16_t)_message.seq;
+                            uint16_t packet_lost_count = 0;
+                            if (seq_received < client->seq_expected)
+                            {
+                                packet_lost_count = (seq_received + 255) - client->seq_expected;
+                            }
+                            else
+                            {
+                                packet_lost_count = seq_received - client->seq_expected;
+                            }
+                            client->seq_expected = _message.seq + 1;
+                            client->status.packets_lost += packet_lost_count;
                         }
                     }
-                    else
+
+                    if (_message.msgid == MAVLINK_MSG_ID_HEARTBEAT)
                     {
-                        if (_message.msgid == MAVLINK_MSG_ID_HEARTBEAT)
-                        {
-                            _last_heartbeat = millis();
-                        }
-                        _checkLinkErrors(&_message);
+                        _last_heartbeat = millis();
                     }
 
                     if (msgReceived == MAVLINK_FRAMING_BAD_CRC ||
                         msgReceived == MAVLINK_FRAMING_BAD_SIGNATURE)
                     {
-                        // we don't process messages locally with bad CRC,
-                        // but we do forward them, so when new messages
-                        // are added we can bridge them
                         break;
                     }
 
-                    //-- Check for message we might be interested
                     if (getWorld()->getComponent()->handleMessage(this, &_message))
                     {
-                        //-- Eat message (don't send it to FC)
                         memset(&_message, 0, sizeof(_message));
                         msgReceived = false;
                         continue;
                     }
-
-                    //-- Got message, leave
                     break;
                 }
             }
@@ -165,121 +267,49 @@ bool MavESP8266GCS::_readMessage()
     }
     if (!msgReceived)
     {
-        if (_heard_from && (millis() - _last_heartbeat) > HEARTBEAT_TIMEOUT)
+        //-- Checks if ALL GCSs have timed out
+        if (_heard_from && !_isGCSHeard())
         {
             _ledManager.setLED(_ledManager.gcs, _ledManager.blink);
-            //-- No need to restart dhcp as it is still running
-            // if (getWorld()->getParameters()->getWifiMode() == WIFI_MODE_AP)
-            // {
-            //     wifi_softap_dhcps_start();
-            // }
             _heard_from = false;
-            //_ip[3] = 255;
-            getWorld()->getLogger()->log("Heartbeat timeout from GCS\n");
+            getWorld()->getLogger()->log("All GCS clients timed out.\n");
         }
     }
     return msgReceived;
 }
 
-void MavESP8266GCS::readMessageRaw()
-{
-    int udp_count = _udp.parsePacket();
-    char buf[1024];
-    int buf_index = 0;
-
-    if (udp_count > 0)
-    {
-        while (buf_index < udp_count)
-        {
-            int result = _udp.read();
-            if (result >= 0)
-            {
-                buf[buf_index] = (char)result;
-                buf_index++;
-            }
-        }
-
-        if (buf[0] == 0x30 && buf[1] == 0x20)
-        {
-            // reboot command, switch out of raw mode soon
-            getWorld()->getComponent()->resetRawMode();
-        }
-
-        _forwardTo->sendMessageRaw((uint8_t *)buf, buf_index);
-    }
-}
-
-//---------------------------------------------------------------------------------
-//-- Forward message(s) to the GCS
-int MavESP8266GCS::sendMessage(mavlink_message_t *message, int count)
-{
-    int sentCount = 0;
-    _udp.beginPacket(_ip, _udp_port);
-    for (int i = 0; i < count; i++)
-    {
-        // Translate message to buffer
-        char buf[300];
-        unsigned len = mavlink_msg_to_send_buffer((uint8_t *)buf, &message[i]);
-        // Send it
-        _status.packets_sent++;
-        size_t sent = _udp.write((uint8_t *)(void *)buf, len);
-        if (sent != len)
-        {
-            break;
-            //-- Fibble attempt at not losing data until we get access to the socket TX buffer
-            //   status before we try to send.
-            _udp.endPacket();
-            delay(2);
-            _udp.beginPacket(_ip, _udp_port);
-            _udp.write((uint8_t *)(void *)&buf[sent], len - sent);
-            _udp.endPacket();
-            return sentCount;
-        }
-        sentCount++;
-    }
-    _udp.endPacket();
-    return sentCount;
-}
-
-//---------------------------------------------------------------------------------
-//-- Forward message to the GCS
-int MavESP8266GCS::sendMessage(mavlink_message_t *message)
-{
-    _sendSingleUdpMessage(message);
-    return 1;
-}
-
-int MavESP8266GCS::sendMessageRaw(uint8_t *buffer, int len)
-{
-    _udp.beginPacket(_ip, _udp_port);
-    size_t sent = _udp.write(buffer, len);
-    _udp.endPacket();
-    //_udp.flush();
-    return sent;
-}
-
-//---------------------------------------------------------------------------------
-//-- Send Radio Status
 void MavESP8266GCS::_sendRadioStatus()
 {
     linkStatus *st = _forwardTo->getStatus();
     uint8_t rssi = 0;
-    uint8_t lostVehicleMessages = 100;
-    uint8_t lostGcsMessages = 100;
 
     if (wifi_get_opmode() == STATION_MODE)
     {
         rssi = (uint8_t)wifi_station_get_rssi();
     }
 
+    //-- Aggregate packet loss from all active GCS clients
+    uint32_t total_gcs_packets_received = 0;
+    uint32_t total_gcs_packets_lost = 0;
+    for (int i = 0; i < MAX_GCS_CLIENTS; i++)
+    {
+        if (_gcs_clients[i].active)
+        {
+            total_gcs_packets_received += _gcs_clients[i].status.packets_received;
+            total_gcs_packets_lost += _gcs_clients[i].status.packets_lost;
+        }
+    }
+
+    uint8_t lostVehicleMessages = 100;
     if (st->packets_received > 0)
     {
         lostVehicleMessages = (st->packets_lost * 100) / st->packets_received;
     }
 
-    if (_status.packets_received > 0)
+    uint8_t lostGcsMessages = 100;
+    if (total_gcs_packets_received > 0)
     {
-        lostGcsMessages = (_status.packets_lost * 100) / _status.packets_received;
+        lostGcsMessages = (total_gcs_packets_lost * 100) / total_gcs_packets_received;
     }
 
     //-- Build message
@@ -289,16 +319,15 @@ void MavESP8266GCS::_sendRadioStatus()
         MAV_COMP_ID_UDP_BRIDGE,
         _forwardTo->_recv_chan,
         &msg,
-        rssi,                // RSSI Only valid in STA mode
-        0,                   // We don't have access to Remote RSSI
-        st->queue_status,    // UDP queue status
-        0,                   // We don't have access to noise data
-        lostVehicleMessages, // Percent of lost messages from Vehicle (UART)
-        lostGcsMessages,     // Percent of lost messages from GCS (UDP)
-        0                    // We don't fix anything
-    );
+        rssi,
+        0,
+        st->queue_status,
+        0,
+        lostVehicleMessages,
+        lostGcsMessages,
+        0);
 
-    _sendSingleUdpMessage(&msg);
+    sendMessage(&msg);
     _status.radio_status_sent++;
 }
 
@@ -310,7 +339,7 @@ void MavESP8266GCS::_sendSingleUdpMessage(mavlink_message_t *msg)
     char buf[300];
     unsigned len = mavlink_msg_to_send_buffer((uint8_t *)buf, msg);
     // Send it
-    _udp.beginPacket(_ip, _udp_port);
+    _udp.beginPacket(_gcs_broadcast_ip, _udp_port);
     size_t sent = _udp.write((uint8_t *)(void *)buf, len);
     _udp.endPacket();
     //-- Fibble attempt at not losing data until we get access to the socket TX buffer
@@ -318,9 +347,72 @@ void MavESP8266GCS::_sendSingleUdpMessage(mavlink_message_t *msg)
     if (sent != len)
     {
         delay(1);
-        _udp.beginPacket(_ip, _udp_port);
+        _udp.beginPacket(_gcs_broadcast_ip, _udp_port);
         _udp.write((uint8_t *)(void *)&buf[sent], len - sent);
         _udp.endPacket();
     }
     _status.packets_sent++;
+}
+
+//---------------------------------------------------------------------------------
+//-- See if we have at least one active GCS client
+bool MavESP8266GCS::_isGCSHeard()
+{
+    for (int i = 0; i < MAX_GCS_CLIENTS; i++)
+    {
+        if (_gcs_clients[i].active)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+//---------------------------------------------------------------------------------
+//-- Prune clients that have been silent for too long
+void MavESP8266GCS::_pruneClients()
+{
+    for (int i = 0; i < MAX_GCS_CLIENTS; i++)
+    {
+        if (_gcs_clients[i].active && (millis() - _gcs_clients[i].last_heartbeat > HEARTBEAT_TIMEOUT))
+        {
+            getWorld()->getLogger()->log("GCS client timed out: %s\n", _gcs_clients[i].ip.toString().c_str());
+            _gcs_clients[i].active = false;
+        }
+    }
+}
+
+//---------------------------------------------------------------------------------
+//-- Add a new client or update an existing one
+GCSClient *MavESP8266GCS::_addOrUpdateClient(IPAddress ip, uint16_t port)
+{
+    //-- First, check if we already have this client
+    for (int i = 0; i < MAX_GCS_CLIENTS; i++)
+    {
+        if (_gcs_clients[i].active && _gcs_clients[i].ip == ip && _gcs_clients[i].port == port)
+        {
+            _gcs_clients[i].last_heartbeat = millis();
+            return &_gcs_clients[i]; // Return pointer to existing client
+        }
+    }
+
+    //-- If not, find an empty slot to add it
+    for (int i = 0; i < MAX_GCS_CLIENTS; i++)
+    {
+        if (!_gcs_clients[i].active)
+        {
+            _gcs_clients[i].active = true;
+            _gcs_clients[i].ip = ip;
+            _gcs_clients[i].port = port;
+            _gcs_clients[i].last_heartbeat = millis();
+            //-- Reset status for new client
+            _gcs_clients[i].heard_from = false;
+            memset(&_gcs_clients[i].status, 0, sizeof(linkStatus));
+            getWorld()->getLogger()->log("New GCS client connected: %s\n", ip.toString().c_str());
+            return &_gcs_clients[i]; // Return pointer to new client
+        }
+    }
+
+    getWorld()->getLogger()->log("GCS client list is full. Could not add: %s\n", ip.toString().c_str());
+    return NULL; // Return NULL if list is full
 }

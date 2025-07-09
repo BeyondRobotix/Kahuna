@@ -41,6 +41,21 @@
 #include "mavesp8266.h"
 #include "led_manager.h"
 
+#define MAX_GCS_CLIENTS 3
+
+// Data structure for connected GCS info
+struct GCSClient
+{
+    bool active;
+    IPAddress ip;
+    uint16_t port;
+    uint32_t last_heartbeat;
+    // -- Per-client packet loss tracking --
+    linkStatus status;
+    uint8_t seq_expected;
+    bool heard_from;
+};
+
 class MavESP8266GCS : public MavESP8266Bridge
 {
 public:
@@ -60,14 +75,18 @@ private:
     bool _readMessage();
     void _sendSingleUdpMessage(mavlink_message_t *msg);
     void _checkUdpErrors(mavlink_message_t *msg);
+    GCSClient *_addOrUpdateClient(IPAddress ip, uint16_t port);
+    bool _isGCSHeard();
+    void _pruneClients();
 
 private:
     WiFiUDP _udp;
-    IPAddress _ip;
+    IPAddress _gcs_broadcast_ip;
     uint16_t _udp_port;
     mavlink_message_t _message;
     unsigned long _last_status_time;
     LEDManager &_ledManager;
+    GCSClient _gcs_clients[MAX_GCS_CLIENTS];
 };
 
 #endif

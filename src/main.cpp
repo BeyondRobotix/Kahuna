@@ -257,7 +257,7 @@ void setup()
     pinMode(GPIO02, INPUT_PULLUP);
     attachInterrupt(GPIO02, reset_interrupt, FALLING);
 
-    Logger.begin(2048);
+    Logger.begin(512); // reduced from 2048
 
     DEBUG_LOG("\nConfiguring access point...\n");
     DEBUG_LOG("Free Sketch Space: %u\n", ESP.getFreeSketchSpace());
