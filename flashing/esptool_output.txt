@@ -1,0 +1,35 @@
+esptool.py v4.5.1
+Serial port COM16
+Connecting.........................
+Traceback (most recent call last):
+  File "C:\Users\mbgpcsk4\.platformio\packages\tool-esptoolpy\esptool.py", line 34, in <module>
+    esptool._main()
+  File "C:\Users\mbgpcsk4\.platformio\packages\tool-esptoolpy\esptool\__init__.py", line 1032, in _main
+    main()
+  File "C:\Users\mbgpcsk4\.platformio\packages\tool-esptoolpy\esptool\__init__.py", line 674, in main
+    esp = esp or get_default_connected_device(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mbgpcsk4\.platformio\packages\tool-esptoolpy\esptool\__init__.py", line 921, in get_default_connected_device
+    _esp.connect(before, connect_attempts)
+  File "C:\Users\mbgpcsk4\.platformio\packages\tool-esptoolpy\esptool\loader.py", line 640, in connect
+    last_error = self._connect_attempt(reset_strategy, mode)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mbgpcsk4\.platformio\packages\tool-esptoolpy\esptool\loader.py", line 542, in _connect_attempt
+    self.sync()
+  File "C:\Users\mbgpcsk4\.platformio\packages\tool-esptoolpy\esptool\loader.py", line 464, in sync
+    val, _ = self.command(
+             ^^^^^^^^^^^^^
+  File "C:\Users\mbgpcsk4\.platformio\packages\tool-esptoolpy\esptool\loader.py", line 404, in command
+    p = self.read()
+        ^^^^^^^^^^^
+  File "C:\Users\mbgpcsk4\.platformio\packages\tool-esptoolpy\esptool\loader.py", line 337, in read
+    return next(self._slip_reader)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mbgpcsk4\.platformio\packages\tool-esptoolpy\esptool\loader.py", line 1506, in slip_reader
+    read_bytes = port.read(1 if waiting == 0 else waiting)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mbgpcsk4\AppData\Local\Programs\Python\Python312\Lib\site-packages\serial\serialwin32.py", line 288, in read
+    result_ok = win32.GetOverlappedResult(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+^C
