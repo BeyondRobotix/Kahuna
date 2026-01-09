@@ -65,6 +65,8 @@ uint32_t _wifi_subnetsta;
 uint32_t _uart_baud_rate;
 uint32_t _flash_left;
 uint32_t _wifi_targetsta;
+uint8_t _mac_address[6];
+bool _RandomiseMAC = true; // Default to true but overwritten once there is a value to load from EEPROM (means we generate a mac address on first boot)
 
 //-- Parameters
 //   No string support in parameters so we stash a char[16] into 4 uint32_t
@@ -96,7 +98,8 @@ struct stMavEspParameters mavParameters[] = {
     {"WIFI_GATEWAYSTA", &_wifi_gatewaysta, MavESP8266Parameters::ID_GATEWAYSTA, sizeof(uint32_t), MAV_PARAM_TYPE_UINT32, false},
     {"WIFI_SUBNET_STA", &_wifi_subnetsta, MavESP8266Parameters::ID_SUBNETSTA, sizeof(uint32_t), MAV_PARAM_TYPE_UINT32, false},
     {"UART_BAUDRATE", &_uart_baud_rate, MavESP8266Parameters::ID_UART, sizeof(uint32_t), MAV_PARAM_TYPE_UINT32, false},
-};
+    {"MAC_ADDRESS", &_mac_address, MavESP8266Parameters::ID_MAC_ADDRESS, sizeof(uint8_t) * 6, MAV_PARAM_TYPE_UINT8, false}, // Add MAC address parameters here
+    {"RANDOM_MAC", &_RandomiseMAC, MavESP8266Parameters::ID_RANDOM_MAC, sizeof(bool), MAV_PARAM_TYPE_UINT8, false}};
 
 //---------------------------------------------------------------------------------
 MavESP8266Parameters::MavESP8266Parameters()
@@ -151,6 +154,8 @@ uint32_t MavESP8266Parameters::getWifiStaIP() { return _wifi_ipsta; }
 uint32_t MavESP8266Parameters::getWifiStaGateway() { return _wifi_gatewaysta; }
 uint32_t MavESP8266Parameters::getWifiStaSubnet() { return _wifi_subnetsta; }
 uint32_t MavESP8266Parameters::getUartBaudRate() { return _uart_baud_rate; }
+uint8_t *MavESP8266Parameters::getMacAddress() { return _mac_address; }
+bool MavESP8266Parameters::getRandomiseMAC() { return _RandomiseMAC; }
 
 //---------------------------------------------------------------------------------
 //-- Reset all to defaults
@@ -171,6 +176,7 @@ void MavESP8266Parameters::resetToDefaults()
     strncpy(_wifi_ssidsta, kDEFAULT_SSID, sizeof(_wifi_ssidsta));
     strncpy(_wifi_passwordsta, kDEFAULT_PASSWORD, sizeof(_wifi_passwordsta));
     _flash_left = ESP.getFreeSketchSpace();
+    _RandomiseMAC = true;
 }
 
 //---------------------------------------------------------------------------------
@@ -218,9 +224,9 @@ uint32_t MavESP8266Parameters::paramHashCheck()
         if (mavParameters[i].type == MAV_PARAM_TYPE_UINT32)
             val = *((uint32_t *)mavParameters[i].value);
         else if (mavParameters[i].type == MAV_PARAM_TYPE_UINT16)
-            val = (uint32_t) * ((uint16_t *)mavParameters[i].value);
+            val = (uint32_t)*((uint16_t *)mavParameters[i].value);
         else
-            val = (uint32_t) * ((int8_t *)mavParameters[i].value);
+            val = (uint32_t)*((int8_t *)mavParameters[i].value);
         crc = _crc32part((uint8_t *)(void *)&val, sizeof(uint32_t), crc);
     }
     delay(0);
@@ -402,4 +408,16 @@ void MavESP8266Parameters::setWifiStaSubnet(uint32_t addr)
 void MavESP8266Parameters::setUartBaudRate(uint32_t baud)
 {
     _uart_baud_rate = baud;
+}
+
+//---------------------------------------------------------------------------------
+void MavESP8266Parameters::setMacAddress(uint8_t *mac)
+{
+    memcpy(_mac_address, mac, 6);
+}
+
+//---------------------------------------------------------------------------------
+void MavESP8266Parameters::setRandomiseMAC(bool randomise)
+{
+    _RandomiseMAC = randomise;
 }

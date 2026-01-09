@@ -165,6 +165,10 @@ void setup_station()
     ledManager.setLED(ledManager.wifi, ledManager.doubleBlink); // Double blink while searching for station
     WiFi.setSleepMode(WIFI_NONE_SLEEP);                         // Aparrently it can go to sleep in station mode
     WiFi.mode(WIFI_STA);
+
+    // Set our custom MAC address
+    wifi_set_macaddr(STATION_IF, Parameters.getMacAddress());
+
     WiFi.config(Parameters.getWifiStaIP(), Parameters.getWifiStaGateway(), Parameters.getWifiStaSubnet(), 0U, 0U);
     WiFi.begin(Parameters.getWifiStaSsid(), Parameters.getWifiStaPassword());
 }
@@ -173,6 +177,10 @@ void setup_AP()
 {
     ledManager.setLED(ledManager.wifi, ledManager.blink);
     WiFi.mode(WIFI_AP);
+
+    // Set our custom MAC address
+    wifi_set_macaddr(SOFTAP_IF, Parameters.getMacAddress());
+
     WiFi.encryptionType(AUTH_WPA2_PSK);
     WiFi.softAP(Parameters.getWifiSsid(), Parameters.getWifiPassword(), Parameters.getWifiChannel());
     localIP = WiFi.softAPIP();
@@ -258,6 +266,32 @@ void setup()
     attachInterrupt(GPIO02, reset_interrupt, FALLING);
 
     Logger.begin(2048);
+
+    // Only runs on first boot
+    if (Parameters.getRandomiseMAC())
+    {
+        uint8_t mac[6] = {0};
+
+        // Get current MAC address
+        WiFi.macAddress(mac);
+
+        // Make it a locally administered unicast MAC
+        mac[0] |= 0x02; // locally administered
+        mac[0] &= 0xFE; // unicast (clear multicast bit)
+
+        // Seed RNG with some device-unique and timing data
+        randomSeed((uint32_t)ESP.getChipId() ^ micros());
+
+        // Randomize the last 3 bytes
+        mac[3] = (uint8_t)random(0, 256);
+        mac[4] = (uint8_t)random(0, 256);
+        mac[5] = (uint8_t)random(0, 256);
+
+        Parameters.setRandomiseMAC(false); // This block will not run on subsequent boots
+        Parameters.setMacAddress(mac);
+        Parameters.saveAllToEeprom();
+        DEBUG_LOG("MAC address randomized\n");
+    }
 
     DEBUG_LOG("\nConfiguring access point...\n");
     DEBUG_LOG("Free Sketch Space: %u\n", ESP.getFreeSketchSpace());
