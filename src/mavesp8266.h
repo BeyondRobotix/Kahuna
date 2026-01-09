@@ -129,6 +129,7 @@ protected:
     mavlink_status_t _mav_status;
     mavlink_message_t _rxmsg;
     mavlink_status_t _rxstatus;
+    bool _randomizedMAC;
 };
 
 //---------------------------------------------------------------------------------

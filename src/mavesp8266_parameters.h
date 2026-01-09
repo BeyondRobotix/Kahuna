@@ -92,7 +92,9 @@ public:
         ID_GATEWAYSTA,
         ID_SUBNETSTA,
         ID_UART,
-        ID_COUNT
+        ID_MAC_ADDRESS,
+        ID_RANDOM_MAC,
+        ID_COUNT // Must be last (insert MAC parameters above)
     };
 
     void begin();
@@ -116,6 +118,8 @@ public:
     uint32_t getWifiStaGateway();
     uint32_t getWifiStaSubnet();
     uint32_t getUartBaudRate();
+    uint8_t *getMacAddress();
+    bool getRandomiseMAC();
 
     void setDebugEnabled(int8_t enabled);
     void setWifiMode(int8_t mode);
@@ -130,7 +134,9 @@ public:
     void setWifiStaGateway(uint32_t addr);
     void setWifiStaSubnet(uint32_t addr);
     void setUartBaudRate(uint32_t baud);
+    void setMacAddress(uint8_t *mac);
     void setLocalIPAddress(uint32_t ipAddress);
+    void setRandomiseMAC(bool randomise);
 
     stMavEspParameters *getAt(int index);
 
