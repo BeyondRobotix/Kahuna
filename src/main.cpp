@@ -167,6 +167,7 @@ void setup_station()
     WiFi.mode(WIFI_STA);
     WiFi.config(Parameters.getWifiStaIP(), Parameters.getWifiStaGateway(), Parameters.getWifiStaSubnet(), 0U, 0U);
     WiFi.begin(Parameters.getWifiStaSsid(), Parameters.getWifiStaPassword());
+    WiFi.localIP(); // Trigger DHCP
 }
 
 void setup_AP()
@@ -202,6 +203,64 @@ void setup_wifi()
     updateServer.begin(&updateStatus);
 }
 
+bool set_sys_ID(int sysid){
+    mavlink_message_t msg;
+    const char* param_id = "SYSID_THISMAV"; 
+
+    mavlink_msg_param_set_pack(
+        255,                    // Source System ID
+        MAV_COMP_ID_UDP_BRIDGE, // Source Component ID (defined in your headers)
+        &msg,                   // Message container
+        Vehicle.systemID(),          // Target System
+        Vehicle.componentID(), //MAV_COMP_ID_AUTOPILOT1,       // Target Component
+        param_id,               // Parameter Name
+        sysid,              // New Value
+        MAV_PARAM_TYPE_REAL32   // ArduPilot parameters are almost always Float/Real32
+    );
+
+    // 4. Send the message out via the UART to the Flight Controller
+    Vehicle.sendMessage(&msg);
+
+
+    // // Read back the parameter to confirm it was set correctly
+    // mavlink_message_t mmsg;
+    
+    // mavlink_msg_param_request_read_pack(
+    //     255,                    // Source System ID
+    //     MAV_COMP_ID_UDP_BRIDGE, // Source Component ID
+    //     &mmsg,                  // Message container 
+    //     Vehicle.systemID(),          // Target System
+    //     MAV_COMP_ID_ALL,       // Target Component
+    //     param_id,               // Parameter Name
+    //     -1                      // Parameter Index (not used when name is provided)
+    // );
+
+    // Vehicle.sendMessage(&mmsg);
+
+    // // In a real implementation, you would want to wait for the response and verify that the parameter was set correctly.
+    // // Reading the response would involve parsing incoming MAVLink messages and checking for a PARAM_VALUE message with the correct parameter name and value.
+
+    // Vehicle.readMessage(); // Trigger reading messages to get the response
+
+    mavlink_msg_command_long_pack(
+        255,                    // Source System ID (GCS ID)
+        MAV_COMP_ID_UDP_BRIDGE, // Source Component ID
+        &msg,                   // Message container
+        Vehicle.systemID(),     // Target System ID (detected from heartbeat)
+        Vehicle.componentID(),  // Target Component ID (usually 1 or MAV_COMP_ID_AUTOPILOT1)
+        MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN, // The Command ID
+        0,                      // Confirmation (0 for first transmission)
+        1.0f,                   // Reboot Autopilot
+        0.0f,                   // Reboot Companion
+        0, 0, 0, 0, 0           // Params 3-7 (unused for this command)
+    );
+
+    // 4. Send the message to the Autopilot via UART
+    Vehicle.sendMessage(&msg);
+
+    return true;
+}
+
 bool connect_wifi()
 {
     if (Parameters.getWifiMode() == WIFI_MODE_STA)
@@ -213,6 +272,9 @@ bool connect_wifi()
             localIP = WiFi.localIP();
             WiFi.setAutoReconnect(true);
             setup_wifi();
+            if (Vehicle.systemID() != localIP[3]){
+                set_sys_ID(localIP[3]);
+            } 
             return false;
         }
         else if (millis() > 60000)
