@@ -65,6 +65,7 @@ private:
     WiFiUDP _udp;
     IPAddress _ip;
     uint16_t _udp_port;
+    bool _broadcasting;
     mavlink_message_t _message;
     unsigned long _last_status_time;
     LEDManager &_ledManager;

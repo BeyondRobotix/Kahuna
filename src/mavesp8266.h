@@ -176,4 +176,7 @@ public:
 
 extern MavESP8266World *getWorld();
 
+//-- Subnet broadcast address of the interface currently in use
+extern IPAddress getBroadcastAddress();
+
 #endif

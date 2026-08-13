@@ -193,9 +193,9 @@ void setup_wifi()
 
     Parameters.setLocalIPAddress(localIP);
 
-    IPAddress gcs_ip(localIP);
-    //-- I'm getting bogus IP from the DHCP server. Broadcasting for now.
-    gcs_ip[3] = 255;
+    //-- We don't know the GCS address yet. Broadcast on our subnet until it talks to us.
+    IPAddress gcs_ip = getBroadcastAddress();
+    Logger.log("Local IP: %s  Broadcasting to: %s\n", localIP.toString().c_str(), gcs_ip.toString().c_str());
 
     GCS.begin(&Vehicle, gcs_ip);
     //-- Initialize Update Server

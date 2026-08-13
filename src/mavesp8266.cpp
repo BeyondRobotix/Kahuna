@@ -39,6 +39,23 @@
 #include "mavesp8266_parameters.h"
 
 //---------------------------------------------------------------------------------
+//-- Compute the subnet broadcast address for the interface we're currently on.
+//   The mask is read from the live interface, so it is correct whether the address
+//   came from DHCP or from a static WiFi.config(). Falls back to the limited
+//   broadcast address (255.255.255.255) if the interface has no mask yet.
+IPAddress
+getBroadcastAddress()
+{
+    struct ip_info info;
+    uint8 interface = (wifi_get_opmode() == STATION_MODE) ? STATION_IF : SOFTAP_IF;
+    if(!wifi_get_ip_info(interface, &info) || info.netmask.addr == 0) {
+        return IPAddress(0xFFFFFFFF);
+    }
+    //-- Host bits all ones. Byte order is irrelevant to a bitwise or/not.
+    return IPAddress(info.ip.addr | ~info.netmask.addr);
+}
+
+//---------------------------------------------------------------------------------
 //-- Base Comm Link
 MavESP8266Bridge::MavESP8266Bridge()
     : _heard_from(false)

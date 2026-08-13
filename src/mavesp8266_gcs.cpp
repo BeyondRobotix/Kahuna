@@ -43,7 +43,7 @@
 
 //---------------------------------------------------------------------------------
 MavESP8266GCS::MavESP8266GCS(LEDManager &ledManager)
-    : _udp_port(DEFAULT_UDP_HPORT), _ledManager(ledManager)
+    : _udp_port(DEFAULT_UDP_HPORT), _broadcasting(true), _ledManager(ledManager)
 {
     _recv_chan = MAVLINK_COMM_1;
     _send_chan = MAVLINK_COMM_0;
@@ -56,6 +56,7 @@ void MavESP8266GCS::begin(MavESP8266Bridge *forwardTo, IPAddress gcsIP)
 {
     MavESP8266Bridge::begin(forwardTo);
     _ip = gcsIP;
+    _broadcasting = true;
     //-- Init variables that shouldn't change unless we reboot
     _udp_port = getWorld()->getParameters()->getWifiUdpHport();
     //-- Start UDP
@@ -105,9 +106,10 @@ bool MavESP8266GCS::_readMessage()
                 {
                     //-- We no longer need to broadcast
                     _status.packets_received++;
-                    if (_ip[3] == 255)
+                    if (_broadcasting)
                     {
                         _ip = _udp.remoteIP();
+                        _broadcasting = false;
                         getWorld()->getLogger()->log("Response from GCS. Setting GCS IP to: %s\n", _ip.toString().c_str());
                         _ledManager.setLED(_ledManager.wifi, _ledManager.on);
                     }
@@ -173,8 +175,11 @@ bool MavESP8266GCS::_readMessage()
                 wifi_softap_dhcps_start();
             }
             _heard_from = false;
-            _ip[3] = 255;
-            getWorld()->getLogger()->log("Heartbeat timeout from GCS\n");
+            //-- Derive from our own address, not the GCS we just lost: it may well be
+            //   on a different subnet from us.
+            _ip = getBroadcastAddress();
+            _broadcasting = true;
+            getWorld()->getLogger()->log("Heartbeat timeout from GCS. Broadcasting to: %s\n", _ip.toString().c_str());
         }
     }
     return msgReceived;
